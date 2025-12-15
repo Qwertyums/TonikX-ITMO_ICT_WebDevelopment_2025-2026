@@ -1,0 +1,9 @@
+site_name: Лабораторные работы по Web-baobaby
+nav:
+  - Главная: index.md
+  - Лабораторная работа №1: report_1.md
+
+
+theme:
+  name: material
+  language: ru
