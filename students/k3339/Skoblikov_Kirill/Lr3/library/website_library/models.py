@@ -16,7 +16,6 @@ class Book(models.Model):
     authors = models.CharField(max_length=256)
     publishing_house = models.CharField(max_length=64)
     publication_year = models.DateField()
-    publication_number = models.IntegerField()
     cipher = models.CharField(max_length=20)
 
     def __str__(self):
@@ -34,6 +33,8 @@ class Hall(models.Model):
 
 class LibraryReader(models.Model):
     reader_id = models.AutoField(primary_key=True)
+    first_name = models.CharField(max_length=32, blank=True, verbose_name="Имя")
+    last_name = models.CharField(max_length=32, blank=True, verbose_name="Фамилия")
     patronymic = models.CharField(max_length=32, blank=True, verbose_name="Отчество")
     reader_card_number = models.CharField(max_length=10, unique=True)
     birth_date = models.DateField()

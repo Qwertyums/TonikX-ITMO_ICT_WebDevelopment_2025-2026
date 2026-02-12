@@ -2,16 +2,18 @@ import calendar
 from datetime import date, timedelta
 from django.db.models import Count, ExpressionWrapper, F, FloatField
 from drf_yasg import openapi
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiParameter
 from .models import Book, LibraryReader, Reading, BookSet, ReaderRegistration, Hall, LibraryEmployee
 from .serializers import BookSerializer, LibraryReaderSerializer, EducationStatsSerializer, \
-    MonthlyLibraryReportSerializer, HallSerializer, EmployeesUsernameSerializer
+    MonthlyLibraryReportSerializer, HallSerializer, EmployeesUsernameSerializer, ReadingSerializer
 from drf_yasg.utils import swagger_auto_schema
 
 
 class AllBookView(APIView):
+    permission_classes = [IsAuthenticated]
+
     @swagger_auto_schema(
         operation_description="Получить список всех книг",
         tags=["Books"],
@@ -41,6 +43,8 @@ class AllBookView(APIView):
 
 
 class ConcreteBookView(APIView):
+    permission_classes = [IsAuthenticated]
+
     @swagger_auto_schema(
         operation_description="Изменение книги по ID",
         tags=["Book"],
@@ -59,7 +63,7 @@ class ConcreteBookView(APIView):
         }
     )
     def patch(self, request, pk):
-        book = Book.object.get(book_id=pk)
+        book = Book.objects.get(book_id=pk)
         if not book:
             return Response({"success": False, "error": f"Книга с ID {pk} не найдена"})
 
@@ -108,6 +112,8 @@ class ConcreteBookView(APIView):
 
 
 class LibraryReaderView(APIView):
+    permission_classes = [IsAuthenticated]
+
     @swagger_auto_schema(
         operation_description="Получить список всех читателей",
         tags=["Readers"],
@@ -134,6 +140,8 @@ class LibraryReaderView(APIView):
 
 
 class ConcreteLibraryReaderView(APIView):
+    permission_classes = [IsAuthenticated]
+
     @swagger_auto_schema(
         operation_description="Изменение читателя по ID",
         tags=["Reader"],
@@ -163,7 +171,6 @@ class ConcreteLibraryReaderView(APIView):
 
         return Response({"success": False, "error": f"Читатель с ID {pk} не изменен"})
 
-
     @swagger_auto_schema(
         operation_description="Удаление читателя по ID",
         tags=["Reader"],
@@ -182,7 +189,7 @@ class ConcreteLibraryReaderView(APIView):
         }
     )
     def delete(self, request, pk):
-        reader = LibraryReader.object.get(reader_id=pk)
+        reader = LibraryReader.objects.get(reader_id=pk)
         if not reader:
             return Response({"success": False, "error": f"Читатель с ID {pk} не найден"})
 
@@ -192,6 +199,8 @@ class ConcreteLibraryReaderView(APIView):
 
 
 class LibraryReaderDelete(APIView):
+    permission_classes = [IsAuthenticated]
+
     @swagger_auto_schema(
         operation_description="Удалить читателя по ID",
         tags=["Readers"],
@@ -221,6 +230,8 @@ class LibraryReaderDelete(APIView):
 
 
 class LibraryReaderStatsView(APIView):
+    permission_classes = [IsAuthenticated]
+
     @swagger_auto_schema(
         operation_description="Статистика читателей по уровню образования",
         tags=["Statistics"],
@@ -256,6 +267,8 @@ class LibraryReaderStatsView(APIView):
 
 
 class YoungLibraryReaderStatsView(APIView):
+    permission_classes = [IsAuthenticated]
+
     @swagger_auto_schema(
         operation_description="Количество читателей младше 20 лет",
         tags=["Statistics"],
@@ -274,6 +287,8 @@ class YoungLibraryReaderStatsView(APIView):
 
 
 class ReaderReadingView(APIView):
+    permission_classes = [IsAuthenticated]
+
     @swagger_auto_schema(
         operation_description="Список книг у читателя",
         tags=["Reader"],
@@ -299,6 +314,8 @@ class ReaderReadingView(APIView):
 
 
 class BadReaderView(APIView):
+    permission_classes = [IsAuthenticated]
+
     @swagger_auto_schema(
         operation_description="Читатели, которые взяли книгу более месяца назад",
         tags=["Statistics"],
@@ -309,7 +326,8 @@ class BadReaderView(APIView):
     )
     def get(self, request):
         month_ago = date.today() - timedelta(days=30)
-        reader_ids = Reading.objects.filter(issued_date__lt=month_ago).values_list('reader_id', flat=True).distinct()
+        reader_ids = Reading.objects.filter(issued_date__lt=month_ago, returned_date__isnull=True) \
+                            .values_list('reader_id', flat=True).distinct()
         readers = LibraryReader.objects.filter(reader_id__in=reader_ids)
         serializer = LibraryReaderSerializer(readers, many=True)
 
@@ -317,6 +335,8 @@ class BadReaderView(APIView):
 
 
 class ReadingRareBook(APIView):
+    permission_classes = [IsAuthenticated]
+
     @swagger_auto_schema(
         operation_description="Читатели, которые взяли редкую книгу",
         tags=["Statistics"],
@@ -345,6 +365,8 @@ class ReadingRareBook(APIView):
 
 
 class MonthlyLibraryReportView(APIView):
+    permission_classes = [IsAuthenticated]
+
     @swagger_auto_schema(
         operation_description="Ежемесячный отчет библиотеки",
         tags=["Reports"],
@@ -370,36 +392,55 @@ class MonthlyLibraryReportView(APIView):
         days_in_month = calendar.monthrange(year, month)[1]
         dates = [date(year, month, day) for day in range(1, days_in_month + 1)]
         daily_statistics = []
-        for current_date in dates:
-            books_per_hall = (BookSet.objects.values("hall__hall_number", "hall__hall_name")
-                              .annotate(count=Count("book")))
 
-            total_books = BookSet.objects.count()
-            readers_per_hall = (LibraryReader.objects.values("hall__hall_number", "hall__hall_name")
-                                .annotate(count=Count("reader_id")))
-            total_readers = LibraryReader.objects.count()
+        def transform_hall_stats(stats_qs):
+            # stats_qs — QuerySet с values('hall__hall_number', 'hall__hall_name') и annotate(count=...)
+            return [
+                {
+                    'hall_number': item['hall__hall_number'],
+                    'hall_name': item['hall__hall_name'],
+                    'count': item['count']
+                }
+                for item in stats_qs
+            ]
+
+        books_per_hall_qs = BookSet.objects.values("hall__hall_number", "hall__hall_name") \
+            .annotate(count=Count("book"))
+        books_per_hall = transform_hall_stats(books_per_hall_qs)
+        total_books = BookSet.objects.count()
+
+        readers_per_hall_qs = LibraryReader.objects.values("hall__hall_number", "hall__hall_name") \
+            .annotate(count=Count("reader_id"))
+        readers_per_hall = transform_hall_stats(readers_per_hall_qs)
+        total_readers = LibraryReader.objects.count()
+        for current_date in dates:
             daily_statistics.append({
                 "date": current_date,
                 "books": {
-                    "per_hall": list(books_per_hall),
+                    "per_hall": books_per_hall,
                     "total": total_books
                 },
                 "readers": {
-                    "per_hall": list(readers_per_hall),
+                    "per_hall": readers_per_hall,
                     "total": total_readers
                 }
             })
 
-        month_registrations = (ReaderRegistration.objects.filter(registration_date__year=year,
-                                                                 registration_date__month=month))
-        registrations_per_hall = (month_registrations.values("hall__hall_number", "hall__hall_name")
-                                                     .annotate(count=Count("reader", distinct=True)))
-        total_registrations = (month_registrations.values("reader").distinct().count())
+        month_registrations = ReaderRegistration.objects.filter(
+            registration_date__year=year,
+            registration_date__month=month
+        )
+
+        registrations_per_hall_qs = month_registrations.values("hall__hall_number", "hall__hall_name") \
+            .annotate(count=Count("reader", distinct=True))
+        registrations_per_hall = transform_hall_stats(registrations_per_hall_qs)
+
+        total_registrations = month_registrations.values("reader").distinct().count()
         report = {
             "period": f"{month:02}.{year}",
             "daily_statistics": daily_statistics,
             "registrations": {
-                "per_hall": list(registrations_per_hall),
+                "per_hall": registrations_per_hall,
                 "total": total_registrations
             }
         }
@@ -409,32 +450,108 @@ class MonthlyLibraryReportView(APIView):
 
 
 class HallView(APIView):
+    permission_classes = [IsAuthenticated]
+
     @swagger_auto_schema(
         operation_description="Получить список всех заллов",
         tags=["Halls"],
         responses={200: HallSerializer(many=True)}
     )
     def get(self, request):
-        halls = Hall.object.all()
+        halls = Hall.objects.all()
         serializer = HallSerializer(halls, many=True)
         return Response(serializer.data)
 
+    @swagger_auto_schema(
+        operation_description="Создать новый зал",
+        tags=["Hall"],
+        request_body=HallSerializer,
+        responses={
+            201: HallSerializer,
+            400: "Ошибка валидации"
+        }
+    )
+    def post(self, request):
+        hall = request.data
+        serializer = HallSerializer(data=hall)
+        if serializer.is_valid(raise_exception=True):
+            hall_saved = serializer.save()
+
+        return Response({"Success": "Hall '{}' created succesfully.".format(hall_saved.hall_name)})
+
 
 class ConcreteHallView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        operation_description="Получить информацию о зале",
+        tags=["Hall"],
+        responses={200: HallSerializer(many=True)}
+    )
     def get(self, request, pk):
-        pass
-    
-    def delete(self, request):
-        pass
+        hall = Hall.objects.get(hall_number=pk)
+        serializer = HallSerializer(hall)
+        return Response({"Hall": serializer.data})
 
-    def patch(self, request):
-        pass
+    @swagger_auto_schema(
+        operation_description="Удаление зала по ID",
+        tags=["Hall"],
+        manual_parameters=[
+            openapi.Parameter(
+                name="pk",
+                in_=openapi.IN_PATH,
+                description="ID зала",
+                type=openapi.TYPE_INTEGER,
+                required=True
+            )
+        ],
+        responses={
+            200: openapi.Response("Зал успешно удален"),
+            404: openapi.Response("Зал не найден")
+        }
+    )
+    def delete(self, request, pk):
+        hall = Hall.objects.get(hall_number=pk)
+        if not hall:
+            return Response({"success": False, "error": f"Зал с ID {pk} не найден"})
 
-    def post(self, request):
-        pass
+        data = {'name': hall.hall_name}
+        hall.delete()
+        return Response({"Succes": True, "message": f'"{data["name"]}" успешно удален'})
+
+    @swagger_auto_schema(
+        operation_description="Изменение зала по ID",
+        tags=["Hall"],
+        manual_parameters=[
+            openapi.Parameter(
+                name="pk",
+                in_=openapi.IN_PATH,
+                description="ID зала",
+                type=openapi.TYPE_INTEGER,
+                required=True
+            )
+        ],
+        responses={
+            200: openapi.Response("Зал успешно изменен"),
+            404: openapi.Response("Зал не найден")
+        }
+    )
+    def patch(self, request, pk):
+        hall = Hall.objects.get(hall_number=pk)
+        if not hall:
+            return Response({"success": False, "error": f"Зал с ID {pk} не найден"})
+
+        serializer = HallSerializer(hall, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response({"success": f"Зал с ID {pk} успешно изменен"})
+
+        return Response({"success": False, "error": f"Зал с ID {pk} не изменен"})
 
 
 class LibraryEmployeeUsernameView(APIView):
+    permission_classes = [IsAuthenticated]
+
     @swagger_auto_schema(
         operation_description="Получить список всех юзернеймов сотрудников",
         tags=["Employees"],
@@ -445,3 +562,103 @@ class LibraryEmployeeUsernameView(APIView):
         serializer = EmployeesUsernameSerializer(usernames, many=True)
         username_list = [item['username'] for item in serializer.data]
         return Response({'usernames': username_list})
+
+
+class ReadingView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        operation_description="Получить список всех чтений",
+        tags=["Readings"],
+        responses={200: ReadingSerializer(many=True)}
+    )
+    def get(self, request):
+        readings = Reading.objects.all()
+        serializer = ReadingSerializer(readings, many=True)
+        return Response(serializer.data)
+
+    @swagger_auto_schema(
+        operation_description="Выдать книгу на дом",
+        tags=["Reading"],
+        request_body=ReadingSerializer,
+        responses={
+            201: ReadingSerializer,
+            400: "Ошибка валидации"
+        }
+    )
+    def post(self, request):
+        reading = request.data
+        serializer = ReadingSerializer(data=reading)
+        if serializer.is_valid(raise_exception=True):
+            reading_saved = serializer.save()
+
+        return Response({"Success": "Reading '{}' created succesfully.".format(reading_saved.reading_id)})
+
+
+class ConcreteReadingView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        operation_description="Получить информацию о чтении",
+        tags=["Reading"],
+        responses={200: ReadingSerializer(many=True)}
+    )
+    def get(self, request, pk):
+        reading = Reading.objects.get(reading_id=pk)
+        serializer = ReadingSerializer(reading)
+        return Response({"Reading": serializer.data})
+
+    @swagger_auto_schema(
+        operation_description="Удаление чтения по ID",
+        tags=["Reading"],
+        manual_parameters=[
+            openapi.Parameter(
+                name="pk",
+                in_=openapi.IN_PATH,
+                description="ID чтения",
+                type=openapi.TYPE_INTEGER,
+                required=True
+            )
+        ],
+        responses={
+            200: openapi.Response("Чтение успешно удалено"),
+            404: openapi.Response("Чтение не найдено")
+        }
+    )
+    def delete(self, request, pk):
+        reading = Reading.objects.get(reading_id=pk)
+        if not reading:
+            return Response({"success": False, "error": f"Чтение с ID {pk} не найдено"})
+
+        data = {'id': reading.reading_id}
+        reading.delete()
+        return Response({"Succes": True, "message": f'Чтение с ID: "{data["id"]}" успешно удалено'})
+
+    @swagger_auto_schema(
+        operation_description="Изменение чтения по ID",
+        tags=["Reading"],
+        manual_parameters=[
+            openapi.Parameter(
+                name="pk",
+                in_=openapi.IN_PATH,
+                description="ID чтения",
+                type=openapi.TYPE_INTEGER,
+                required=True
+            )
+        ],
+        responses={
+            200: openapi.Response("Чтение успешно изменено"),
+            404: openapi.Response("Чтение не найдено")
+        }
+    )
+    def patch(self, request, pk):
+        reading = Reading.objects.get(reading_id=pk)
+        if not reading:
+            return Response({"success": False, "error": f"Чтение с ID {pk} не найдено"})
+
+        serializer = ReadingSerializer(reading, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response({"success": f"Чтение с ID {pk} успешно изменено"})
+
+        return Response({"success": False, "error": f"Чтение с ID {pk} не изменено"})

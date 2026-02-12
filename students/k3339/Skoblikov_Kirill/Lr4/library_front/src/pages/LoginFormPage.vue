@@ -115,32 +115,25 @@ export default {
                 };
 
                 const response = await authAPI.login(dataToSend);
-
-                // Для токенной аутентификации Djoser
                 const authToken = response.data.auth_token;
-
                 if (authToken) {
                     localStorage.setItem('auth_token', authToken);
                 }
 
                 successMessage.value = 'Авторизация успешна!';
 
-                // Очистка формы
                 Object.keys(formData).forEach(key => {
                     formData[key] = '';
                 });
 
-                // Перенаправление на главную страницу
                 setTimeout(() => {
-                    router.push('/');
-                }, 2000);
+                    router.push('/app/books');
+                }, 1000);
 
             } catch (error) {
                 if (error.response) {
                     if (error.response.data) {
                         const data = error.response.data;
-
-                        // Обработка ошибок Djoser
                         if (data.non_field_errors) {
                             errorMessage.value = data.non_field_errors.join(', ');
                         } else {
@@ -155,8 +148,6 @@ export default {
                             }
                         }
                     }
-                } else if (error.request) {
-                    errorMessage.value = 'Ошибка сети. Проверьте подключение к интернету.';
                 } else {
                     errorMessage.value = 'Произошла ошибка. Попробуйте еще раз.';
                 }
